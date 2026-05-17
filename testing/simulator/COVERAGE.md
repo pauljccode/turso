@@ -193,7 +193,7 @@ Feature support of [sqlite expr syntax](https://www.sqlite.org/lang_expr.html).
 | ---------------------------- | ------ | ------- |
 | abs(X)                       | No     |         |
 | changes()                    | No     |         |
-| char(X1,X2,...,XN)           | No     |         |
+| char(X1,X2,...,XN)           | Partial | ScalarFunctionPersistence covers persisted numeric coercion edge cases |
 | coalesce(X,Y,...)            | No     |         |
 | concat(X,...)                | No     |         |
 | concat_ws(SEP,X,...)         | No     |         |
@@ -221,7 +221,7 @@ Feature support of [sqlite expr syntax](https://www.sqlite.org/lang_expr.html).
 | printf(FORMAT,...)           | No     |         |
 | quote(X)                     | No     |         |
 | random()                     | No     |         |
-| randomblob(N)                | No     |         |
+| randomblob(N)                | Partial | ScalarFunctionPersistence covers persisted numeric coercion edge cases |
 | replace(X,Y,Z)               | No     |         |
 | round(X)                     | No     |         |
 | round(X,Y)                   | No     |         |
@@ -243,11 +243,11 @@ Feature support of [sqlite expr syntax](https://www.sqlite.org/lang_expr.html).
 | trim(X,Y)                    | No     |         |
 | typeof(X)                    | No     |         |
 | unhex(X)                     | No     |         |
-| unhex(X,Y)                   | No     |         |
+| unhex(X,Y)                   | Partial | ScalarFunctionPersistence covers persisted blob ignore-set edge case |
 | unicode(X)                   | No     |         |
 | unlikely(X)                  | No     |         |
 | upper(X)                     | No     |         |
-| zeroblob(N)                  | No     |         |
+| zeroblob(N)                  | Partial | ScalarFunctionPersistence covers persisted numeric coercion edge cases |
 
 #### Mathematical functions
 
