@@ -332,11 +332,10 @@ impl Value {
     where
         F: Fn(&mut [u8]),
     {
-        let length = match self {
-            Value::Numeric(Numeric::Integer(i)) => *i,
-            Value::Numeric(Numeric::Float(f)) => f64::from(*f) as i64,
-            Value::Text(t) => t.as_str().parse().unwrap_or(1),
-            _ => 1,
+        let length = match Numeric::from_value(self) {
+            Some(Numeric::Integer(i)) => i,
+            Some(Numeric::Float(f)) => real_to_i64(f64::from(f)),
+            None => 1,
         }
         .max(1);
 
@@ -654,7 +653,8 @@ impl Value {
                     _ => Value::Null,
                 },
                 Some(ignore) => match ignore {
-                    Value::Text(_) => {
+                    Value::Null => Value::Null,
+                    _ => {
                         let input = self.to_string();
                         let ignore = ignore.to_string();
                         let mut chars = input.chars().peekable();
@@ -688,7 +688,6 @@ impl Value {
                             out.push(((hi << 4) | lo) as u8);
                         }
                     }
-                    _ => Value::Null,
                 },
             },
         }
@@ -846,11 +845,10 @@ impl Value {
     }
 
     pub fn exec_zeroblob(&self) -> Result<Value> {
-        let length: i64 = match self {
-            Value::Numeric(Numeric::Integer(i)) => *i,
-            Value::Numeric(Numeric::Float(f)) => f64::from(*f) as i64,
-            Value::Text(s) => s.as_str().parse().unwrap_or(0),
-            _ => 0,
+        let length: i64 = match Numeric::from_value(self) {
+            Some(Numeric::Integer(i)) => i,
+            Some(Numeric::Float(f)) => f64::from(f) as i64,
+            None => 0,
         }
         .max(0);
 
@@ -1337,22 +1335,31 @@ impl Value {
     pub fn exec_char<'a, T: Iterator<Item = &'a Self>>(values: T) -> Self {
         let result: String = values
             .filter_map(|x| match x {
-                Value::Numeric(Numeric::Integer(i)) => {
-                    // Convert integer to Unicode codepoint.
-                    // For invalid codepoints (negative, surrogates, or > U+10FFFF),
-                    // output U+FFFD (replacement character) to match SQLite behavior.
-                    if *i >= 0 {
-                        Some(char::from_u32(*i as u32).unwrap_or('\u{FFFD}'))
-                    } else {
-                        Some('\u{FFFD}')
-                    }
+                Value::Numeric(Numeric::Integer(i)) => Some(sqlite_char_from_i64(*i)),
+                Value::Numeric(Numeric::Float(f)) => {
+                    Some(sqlite_char_from_i64(real_to_i64(f64::from(*f))))
                 }
-                // NULL arguments produce NUL characters to match SQLite behavior.
-                Value::Null => Some('\0'),
-                _ => None,
+                Value::Text(_) | Value::Blob(_) => Numeric::from_value(x).map(|numeric| {
+                    sqlite_char_from_i64(match numeric {
+                        Numeric::Integer(i) => i,
+                        Numeric::Float(f) => real_to_i64(f64::from(f)),
+                    })
+                }),
+                Value::Null => {
+                    // NULL arguments produce NUL characters to match SQLite behavior.
+                    Some('\0')
+                }
             })
             .collect();
         Value::build_text(result)
+    }
+}
+
+fn sqlite_char_from_i64(i: i64) -> char {
+    if i >= 0 {
+        char::from_u32(i as u32).unwrap_or('\u{FFFD}')
+    } else {
+        '\u{FFFD}'
     }
 }
 
@@ -2480,6 +2487,10 @@ mod tests {
         let expected = Value::Blob(vec![0xaa, 0xbb, 0xcc]);
         assert_eq!(input.exec_unhex(Some(&Value::build_text("-"))), expected);
 
+        let input = Value::build_text("aa-bb");
+        let expected = Value::Blob(vec![0xaa, 0xbb]);
+        assert_eq!(input.exec_unhex(Some(&Value::Blob(vec![b'-']))), expected);
+
         let input = Value::build_text("aa bb");
         let expected = Value::Blob(vec![0xaa, 0xbb]);
         assert_eq!(input.exec_unhex(Some(&Value::build_text(" "))), expected);
@@ -2551,7 +2562,19 @@ mod tests {
                     .iter()
                     .map(|reg| reg.get_value())
             ),
-            Value::build_text("")
+            Value::build_text("\0")
+        );
+        assert_eq!(
+            Value::exec_char(
+                [
+                    Register::Value(Value::from_f64(65.9)),
+                    Register::Value(Value::build_text("65suffix")),
+                    Register::Value(Value::Blob(b"65suffix".to_vec())),
+                ]
+                .iter()
+                .map(|reg| reg.get_value())
+            ),
+            Value::build_text("AAA")
         );
     }
 
@@ -2643,6 +2666,14 @@ mod tests {
             TestCase {
                 input: Value::build_text("5"),
                 expected_len: 5,
+            },
+            TestCase {
+                input: Value::build_text("3.9suffix"),
+                expected_len: 3,
+            },
+            TestCase {
+                input: Value::Blob(b"3.9suffix".to_vec()),
+                expected_len: 3,
             },
             TestCase {
                 input: Value::build_text("0"),
@@ -3018,6 +3049,10 @@ mod tests {
         let expected = Value::Blob(vec![0; 5]);
         assert_eq!(input.exec_zeroblob().unwrap(), expected);
 
+        let input = Value::build_text("5.9suffix");
+        let expected = Value::Blob(vec![0; 5]);
+        assert_eq!(input.exec_zeroblob().unwrap(), expected);
+
         let input = Value::build_text("-5");
         let expected = Value::Blob(vec![]);
         assert_eq!(input.exec_zeroblob().unwrap(), expected);
@@ -3032,6 +3067,10 @@ mod tests {
 
         let input = Value::Blob(vec![1]);
         let expected = Value::Blob(vec![]);
+        assert_eq!(input.exec_zeroblob().unwrap(), expected);
+
+        let input = Value::Blob(b"5.9suffix".to_vec());
+        let expected = Value::Blob(vec![0; 5]);
         assert_eq!(input.exec_zeroblob().unwrap(), expected);
 
         // Test TooBig error
